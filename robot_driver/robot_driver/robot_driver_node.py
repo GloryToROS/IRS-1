@@ -1,121 +1,97 @@
-from time import time, sleep
+import math
 import serial
-
 import rclpy
+from time import sleep, time
 from rclpy.node import Node
-
-import tf2_ros
-from transforms3d.euler import euler2quat
-
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
-from geometry_msgs.msg import TransformStamped
-
-import math
-
-# from arduino_driver import ArduinoDriver
+from transforms3d.euler import euler2quat
+from robot_driver.arduino_driver import ArduinoDriver
 
 
-class ArduinoDriver:
-    def __init__(self, port):
-        self.l = 0.16   # расстояние между центрами ведущих колёс в метрах
-        self.r = 0.035  # радиус ведущих колёс в метрах
-        self.ser = serial.Serial(port, 9600, timeout=0.1)
-        sleep(3)
-
-    def _write(self, command):
-        self.ser.write((command + '\n').encode())
-
-    def _read_arduino(self):
-        try:
-            return self.ser.readline().decode().strip()
-        except:
-            return None
-
-    def proceed_command(self, twist):
-        v = twist.linear.x      # м/с
-        w = twist.angular.z     # рад/с
-
-        v_left  = v - w * self.l / 2
-        v_right = v + w * self.l / 2
-
-        left_cmd  = int(v_left  * 100)
-        right_cmd = int(v_right * 100)
-
-        self._write(f"N {left_cmd} {right_cmd}")
-
-    def get_robot_data(self):
-        self._write("g")
-
-        gy25 = None
-        enc = None
-        voltage = None
-
-        start = time()
-        while time() - start < 0.3:
-            line = self._read_arduino()
-            if not line:
-                continue
-
-            if line.startswith("ENC:"):
-                enc = [int(x) for x in line.split()[1:]]
-            elif line.startswith("VOLTAGE:"):
-                voltage = [float(x) for x in line.split()[1:]]
-            elif line.startswith("GY25:"):
-                gy25 = [int(x) for x in line.split()[1:]]
-
-            if enc is not None:
-                break
-
-        return gy25, enc, voltage
-
-class RobotDriver(Node):
+class RobotDriverNode(Node):
     def __init__(self):
         super().__init__("robot_driver")
 
-        # железо
-        self.arduino = ArduinoDriver(
-            "/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0"
-        )
+        # Инициализация параметров
+        self.TICKS_PER_REV = 2500.0
+        self.WHEEL_DIAMETER = 0.065  # 6.5 см
+        self.WHEEL_BASE = 0.16  # 16 см
+        self.CIRCUMFERENCE = math.pi * self.WHEEL_DIAMETER
+
+        # Железо
+        self.arduino = ArduinoDriver("/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0")
+
+        # Состояние одометрии
+        self.x = 0.0
+        self.y = 0.0
+        self.yaw = 0.0
+
+        # Хранение абсолютных тиков для вычисления дельты
+        self.last_left_ticks = None
+        self.last_right_ticks = None
+        self.last_time = self.get_clock().now()
 
         # ROS интерфейсы
         self.create_subscription(Twist, "/cmd_vel", self.cmd_callback, 10)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
         self.tf_pub = TransformBroadcaster(self)
 
-        # состояние
-        self.x = 0.0
-        self.y = 0.0
-        self.yaw = 0.0
-        self.last_time = self.get_clock().now()
-
-        # таймер 20 Гц
+        # Таймер обновления (20 Гц)
         self.create_timer(0.05, self.update)
+        self.get_logger().info("Драйвер робота IRS-1 запущен")
 
     def cmd_callback(self, msg):
         self.arduino.proceed_command(msg)
 
     def update(self):
-        gy25, enc, voltage = self.arduino.get_robot_data()
-        if enc is None:
-            return
+        # Получаем данные (gy25 в скетче пустой, поэтому игнорируем)
+        _, enc, _ = self.arduino.get_robot_data()
 
-        # примитивная одометрия по энкодерам
-        dl = enc[0] / 1000.0
-        dr = enc[1] / 1000.0
-        ds = (dl + dr) / 2.0
-        dyaw = (dr - dl) / self.arduino.l
+        if enc is None or len(enc) < 2:
+            return
 
         now = self.get_clock().now()
         dt = (now - self.last_time).nanoseconds * 1e-9
         self.last_time = now
 
-        self.yaw += dyaw
-        self.x += ds * math.cos(self.yaw)
-        self.y += ds * math.sin(self.yaw)
+        # Если это первый запуск, просто инициализируем счетчики
+        if self.last_left_ticks is None:
+            self.last_left_ticks = enc[0]
+            self.last_right_ticks = enc[1]
+            return
 
-        # публикуем odom
+        # 1. Считаем сколько тиков проехало каждое колесо с прошлого раза
+        d_left_ticks = enc[0] - self.last_left_ticks
+        d_right_ticks = enc[1] - self.last_right_ticks
+
+        # 2. Переводим тики в пройденные метры
+        dist_left = (d_left_ticks / self.TICKS_PER_REV) * self.CIRCUMFERENCE
+        dist_right = (d_right_ticks / self.TICKS_PER_REV) * self.CIRCUMFERENCE
+
+        # 3. Вычисляем общее перемещение робота (ds) и изменение угла (dyaw)
+        ds = (dist_left + dist_right) / 2.0
+        dyaw = (dist_right - dist_left) / self.WHEEL_BASE
+
+        # 4. Обновляем глобальные координаты x, y, yaw (интегрирование)
+        # Используем yaw + dyaw/2 для более точной аппроксимации дуги
+        self.x += ds * math.cos(self.yaw + dyaw / 2.0)
+        self.y += ds * math.sin(self.yaw + dyaw / 2.0)
+        self.yaw += dyaw
+
+        # Сохраняем значения для следующего цикла
+        self.last_left_ticks = enc[0]
+        self.last_right_ticks = enc[1]
+
+        # 5. Публикуем данные
+        self.publish_data(now)
+
+    def publish_data(self, now):
+        # Превращаем угол yaw в кватернион для ROS
+        q = euler2quat(0, 0, self.yaw)
+
+        # Сообщение одометрии
         odom = Odometry()
         odom.header.stamp = now.to_msg()
         odom.header.frame_id = "odom"
@@ -123,28 +99,35 @@ class RobotDriver(Node):
 
         odom.pose.pose.position.x = self.x
         odom.pose.pose.position.y = self.y
-        odom.pose.pose.orientation.z = math.sin(self.yaw / 2)
-        odom.pose.pose.orientation.w = math.cos(self.yaw / 2)
+        odom.pose.pose.orientation.w = q[0]
+        odom.pose.pose.orientation.x = q[1]
+        odom.pose.pose.orientation.y = q[2]
+        odom.pose.pose.orientation.z = q[3]
 
         self.odom_pub.publish(odom)
 
-        # публикуем TF
+        # Сообщение TF
         t = TransformStamped()
-        t.header.stamp = now.to_msg()
-        t.header.frame_id = "odom"
+        t.header = odom.header
         t.child_frame_id = "base_link"
         t.transform.translation.x = self.x
         t.transform.translation.y = self.y
-        t.transform.rotation.z = odom.pose.pose.orientation.z
-        t.transform.rotation.w = odom.pose.pose.orientation.w
+        t.transform.rotation = odom.pose.pose.orientation
 
         self.tf_pub.sendTransform(t)
 
 
 def main():
     rclpy.init()
-    node = RobotDriver()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node = RobotDriverNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
+
+if __name__ == "__main__":
+    main()
