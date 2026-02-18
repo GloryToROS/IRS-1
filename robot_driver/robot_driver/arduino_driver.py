@@ -4,6 +4,7 @@ import serial
 
 class ArduinoDriver:
     def __init__(self, port):
+        # изменить self.l, если будет погрешность при повороте
         self.l = 0.16  # Расстояние между колесами (метры)
         self.r = 0.0325  # Радиус колес (6.5см / 2 в метрах)
         try:
@@ -31,8 +32,8 @@ class ArduinoDriver:
         v = twist.linear.x * 100.0  # м/с -> см/с
         w = twist.angular.z  # рад/с
 
-        v_left = int(v - w * 16.0 / 2.0)
-        v_right = int(v + w * 16.0 / 2.0)
+        v_left = int(v - w * (self.l * 100) / 2.0)
+        v_right = int(v + w * (self.l * 100) / 2.0)
 
         self._write(f"N {v_left} {v_right}")
 
