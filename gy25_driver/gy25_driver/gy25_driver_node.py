@@ -1,0 +1,64 @@
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import Quaternion
+import serial
+import math
+
+
+class GY25Driver(Node):
+    def __init__(self):
+        super().__init__('gy25_driver')
+        self.publisher_ = self.create_publisher(Imu, 'imu/data', 10)
+
+        # Настройка порта
+        port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0'
+        self.ser = serial.Serial(port, 115200, timeout=1)
+
+        # Таймер опроса (100 Гц)
+        self.timer = self.create_timer(0.01, self.read_and_publish)
+        self.get_logger().info('GY-25 ROS2 Node started!')
+
+    def decode_angle(self, high, low):
+        # Формула для GY-25: (High << 8 | Low) / 100.0
+        angle = (high << 8 | low) / 100.0
+        if angle > 180:
+            angle -= 655.35  # Обработка отрицательных углов
+        return math.radians(angle)  # ROS использует радианы
+
+    def read_and_publish(self):
+        if self.ser.in_waiting >= 8:
+            data = self.ser.read(self.ser.in_waiting)
+            # Ищем заголовок в буфере
+            for i in range(len(data) - 7):
+                if data[i] == 0xAA and data[i + 1] == 0x02 and data[i + 7] == 0x55:
+                    yaw = self.decode_angle(data[i + 2], data[i + 3])
+                    pitch = self.decode_angle(data[i + 4], data[i + 5])
+                    roll = self.decode_angle(data[i + 6], data[i + 7])
+
+                    msg = Imu()
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.header.frame_id = 'imu_link'
+
+                    # Превращаем Эйлеры в Кватернион (упрощенно для примера)
+                    cy = math.cos(yaw * 0.5)
+                    sy = math.sin(yaw * 0.5)
+                    cp = math.cos(pitch * 0.5)
+                    sp = math.sin(pitch * 0.5)
+                    cr = math.cos(roll * 0.5)
+                    sr = math.sin(roll * 0.5)
+
+                    msg.orientation.w = cy * cp * cr + sy * sp * sr
+                    msg.orientation.x = cy * cp * sr - sy * sp * cr
+                    msg.orientation.y = sy * cp * sr + cy * sp * cr
+                    msg.orientation.z = sy * cp * cr - cy * sp * sr
+
+                    self.publisher_.publish(msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = GY25Driver()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
