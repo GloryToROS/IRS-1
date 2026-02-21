@@ -43,8 +43,8 @@ class RobotDriverNode(Node):
         self.create_subscription(Twist, '/cmd_vel', self.cmd_callback, 10)
 
         # --- ТАЙМЕРЫ ---
-        # запрос данных: 10 Гц
-        self.create_timer(0.1, self.request_data)
+        # # запрос данных: 10 Гц
+        # self.create_timer(0.1, self.request_data)
 
         # чтение буфера
         self.create_timer(0.01, self.read_serial)
@@ -55,7 +55,7 @@ class RobotDriverNode(Node):
     def cmd_callback(self, msg):
         """Обработка команд движения (приоритет!)"""
         # Лог в сыром виде
-        # self.get_logger().info(f"CMD: lin={msg.linear.x:.2f} ang={msg.angular.z:.2f}")
+        self.get_logger().info(f"CMD: lin={msg.linear.x:.2f} ang={msg.angular.z:.2f}")
 
         v = msg.linear.x * 100.0  # м/с -> см/с
         w = msg.angular.z
@@ -66,7 +66,8 @@ class RobotDriverNode(Node):
         try:
             cmd = f"N {v_left} {v_right}\n"
             self.ser.write(cmd.encode())
-            # self.ser.flush() # раскомментировать, если будут задержки при отклике на команды
+            self.ser.flush() # раскомментировать, если будут задержки при отклике на команды
+            # self.get_logger().info(f"Command sent")
         except Exception as e:
             self.get_logger().error(f"WRITE FAIL: {e}")
 
@@ -136,6 +137,7 @@ class RobotDriverNode(Node):
         self.odom_pub.publish(o)
 
         # # трансформы
+        # # больше не нужен, так как его публикует ekf
         # t = TransformStamped()
         # t.header = o.header
         # t.header.frame_id = 'odom'
@@ -166,20 +168,6 @@ class RobotDriverNode(Node):
         # self.tf_broadcaster.sendTransform([t, laser_t])  # Шлем списком!
         self.tf_broadcaster.sendTransform(laser_t)
         # # self.tf_broadcaster.sendTransform(t)
-
-        # трансформ для лидара
-        laser_t = TransformStamped()
-        laser_t.header.stamp = now
-        laser_t.header.frame_id = 'base_link'
-        laser_t.child_frame_id = 'laser_frame'
-        laser_t.transform.translation.x = -0.03  # смещение лидара
-        laser_t.transform.translation.y = 0.0
-        laser_t.transform.translation.z = 0.15
-        laser_t.transform.rotation.w = 1.0  # поворот, если лидар развернут
-        # self.tf_broadcaster.sendTransform(laser_t)
-
-        # self.tf_broadcaster.sendTransform([t, laser_t])  # Шлем списком!
-        self.tf_broadcaster.sendTransform(laser_t)
 
         # логирование координат
         # self.get_logger().info(f"X={self.x:.3f} Y={self.y:.3f} Yaw={self.yaw:.2f}")

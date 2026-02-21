@@ -7,13 +7,20 @@ from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
-    ekf_config = '/home/robot/ros2_ws/config/ekf.yaml'
-    slam_config = '/home/robot/ros2_ws/config/slam_params.yaml'
+    ekf_config = '/home/robot/ros2_ws/src/robot_driver/config/ekf.yaml'
+    slam_config = '/home/robot/ros2_ws/src/robot_driver/config/slam_params.yaml'
     
     robot_driver_node = Node(
         package='robot_driver',
         executable='robot_driver_node',
         name='robot_driver_node',
+        output='screen'
+    )
+
+    gy25_driver_node = Node(
+        package='robot_driver',
+        executable='gy25_driver_node',
+        name='gy25_driver_node',
         output='screen'
     )
 
@@ -51,6 +58,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         robot_driver_node,
+        gy25_driver_node,
         ekf_node,
         lidar_launch,
         slam_node
