@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, TransformStamped
 import serial
@@ -48,13 +49,13 @@ class RobotDriverNode(Node):
         # чтение буфера
         self.create_timer(0.01, self.read_serial)
 
-        # публикация в ROS и консоль: 3 Гц
-        self.create_timer(0.33, self.publish_diagnostics)
+        # публикация в ROS и консоль
+        self.create_timer(0.05, self.publish_diagnostics)
 
     def cmd_callback(self, msg):
         """Обработка команд движения (приоритет!)"""
         # Лог в сыром виде
-        self.get_logger().info(f"CMD: lin={msg.linear.x:.2f} ang={msg.angular.z:.2f}")
+        # self.get_logger().info(f"CMD: lin={msg.linear.x:.2f} ang={msg.angular.z:.2f}")
 
         v = msg.linear.x * 100.0  # м/с -> см/с
         w = msg.angular.z
@@ -114,7 +115,11 @@ class RobotDriverNode(Node):
 
     def publish_diagnostics(self):
         """Публикация в ROS и консоль"""
-        now = self.get_clock().now().to_msg()
+        # создание времени
+        ros_now = self.get_clock().now()
+        future = (ros_now + rclpy.duration.Duration(seconds=0.2)).to_msg()
+        now = ros_now.to_msg()
+
         q = euler2quat(0, 0, self.yaw)
 
         # одометрия
@@ -130,24 +135,66 @@ class RobotDriverNode(Node):
         o.pose.pose.orientation.z = q[3]
         self.odom_pub.publish(o)
 
-        # трансформы
-        t = TransformStamped()
-        t.header = o.header
-        t.child_frame_id = 'base_link'
-        t.transform.translation.x = self.x
-        t.transform.translation.y = self.y
-        t.transform.rotation = o.pose.pose.orientation
-        self.tf_broadcaster.sendTransform(t)
+        # # трансформы
+        # t = TransformStamped()
+        # t.header = o.header
+        # t.header.frame_id = 'odom'
+        # t.child_frame_id = 'base_link'
+        # t.transform.translation.x = self.x
+        # t.transform.translation.y = self.y
+        # t.transform.rotation =         # # трансформы
+        # t = TransformStamped()
+        # t.header = o.header
+        # t.header.frame_id = 'odom'
+        # t.child_frame_id = 'base_link'
+        # t.transform.translation.x = self.x
+        # t.transform.translation.y = self.y
+        # t.transform.rotation = o.pose.pose.orientation
+        # # self.tf_broadcaster.sendTransform(t)
+
+        # трансформ для лидара
+        laser_t = TransformStamped()
+        laser_t.header.stamp = now
+        laser_t.header.frame_id = 'base_link'
+        laser_t.child_frame_id = 'laser_frame'
+        laser_t.transform.translation.x = -0.03  # смещение лидара
+        laser_t.transform.translation.y = 0.0
+        laser_t.transform.translation.z = 0.15
+        laser_t.transform.rotation.w = 1.0  # поворот, если лидар развернут
+        # self.tf_broadcaster.sendTransform(laser_t)
+
+        # self.tf_broadcaster.sendTransform([t, laser_t])  # Шлем списком!
+        self.tf_broadcaster.sendTransform(laser_t)
+        # # self.tf_broadcaster.sendTransform(t)
+
+        # трансформ для лидара
+        laser_t = TransformStamped()
+        laser_t.header.stamp = now
+        laser_t.header.frame_id = 'base_link'
+        laser_t.child_frame_id = 'laser_frame'
+        laser_t.transform.translation.x = -0.03  # смещение лидара
+        laser_t.transform.translation.y = 0.0
+        laser_t.transform.translation.z = 0.15
+        laser_t.transform.rotation.w = 1.0  # поворот, если лидар развернут
+        # self.tf_broadcaster.sendTransform(laser_t)
+
+        # self.tf_broadcaster.sendTransform([t, laser_t])  # Шлем списком!
+        self.tf_broadcaster.sendTransform(laser_t)
 
         # логирование координат
-        self.get_logger().info(f"X={self.x:.3f} Y={self.y:.3f} Yaw={self.yaw:.2f}")
+        # self.get_logger().info(f"X={self.x:.3f} Y={self.y:.3f} Yaw={self.yaw:.2f}")
 
 
 def main():
     rclpy.init()
     node = RobotDriverNode()
+
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
+
     try:
-        rclpy.spin(node)
+        # rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
