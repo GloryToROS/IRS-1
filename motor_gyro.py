@@ -99,21 +99,22 @@ class SmartRobot:
         target_yaw = self.current_yaw
         kp = 0.8
 
-        print(f"[Drive] Старт движения. Цель: {target_dist_m}м, Курс: {target_yaw:.1f}°")
-        # # Заголовок лога для удобства
-        # print("Time_s\tX_m\tY_m\tYaw_deg\tDist_m")
+        # Оперируем направлением
+        direction = 1 if target_dist_m >= 0 else -1
+
+        print(f"[Drive] Старт движения ({'вперед' if direction > 0 else 'назад'}). "
+              f"Цель: {target_dist_m}м, Курс: {target_yaw:.1f}°")
 
         try:
             while True:
                 self.update_sensors()
 
                 elapsed = time.time() - start_time
-                traveled = math.sqrt((self.x - start_x)**2 + (self.y - start_y)**2)
+                # Считаем пройденный путь (всегда положительный из-за корня)
+                traveled = math.sqrt((self.x - start_x) ** 2 + (self.y - start_y) ** 2)
 
-                # # Вывод текущего состояния в формате лога
-                # print(f"{elapsed:.2f}\t{self.x:.4f}\t{self.y:.4f}\t{self.current_yaw:.2f}\t{traveled:.4f}")
-
-                if traveled >= target_dist_m:
+                # Сравниваем пройденное расстояние с модулем цели
+                if traveled >= abs(target_dist_m):
                     self.ser_arduino.write(b"N 0 0\n")
                     print(f"[Drive] Цель достигнута. Итоговое расстояние: {traveled:.4f}м")
                     break
@@ -122,57 +123,23 @@ class SmartRobot:
                 error = target_yaw - self.current_yaw
                 if error > 180: error -= 360
                 if error < -180: error += 360
-                correction = error * kp
 
-                v_l = int(speed_cm_s - correction)
-                v_r = int(speed_cm_s + correction)
+                # При движении назад ошибка инвертируется для правильного подруливания
+                correction = error * kp * direction
+
+                # Базовая скорость теперь зависит от знака дистанции
+                base_speed = speed_cm_s * direction
+
+                v_l = int(base_speed - correction)
+                v_r = int(base_speed + correction)
+
                 self.ser_arduino.write(f"N {v_l} {v_r}\n".encode())
 
-                time.sleep(0.1) # Интервал лога (10 Гц)
+                time.sleep(0.1)
         except KeyboardInterrupt:
             self.ser_arduino.write(b"N 0 0\n")
             print("\n[Drive] Остановлено пользователем")
- def drive_straight(self, target_dist_m, speed_cm_s=15):
-        self.reset_coordinates()
-        self.update_sensors()
-        start_x, start_y = self.x, self.y
-        start_time = time.time()
-        target_yaw = self.current_yaw
-        kp = 0.8
 
-        print(f"[Drive] Старт движения. Цель: {target_dist_m}м, Курс: {target_yaw:.1f}°")
-        # # Заголовок лога для удобства
-        # print("Time_s\tX_m\tY_m\tYaw_deg\tDist_m")
-
-        try:
-            while True:
-                self.update_sensors()
-
-                elapsed = time.time() - start_time
-                traveled = math.sqrt((self.x - start_x)**2 + (self.y - start_y)**2)
-
-                # # Вывод текущего состояния в формате лога
-                # print(f"{elapsed:.2f}\t{self.x:.4f}\t{self.y:.4f}\t{self.current_yaw:.2f}\t{traveled:.4f}")
-
-                if traveled >= target_dist_m:
-                    self.ser_arduino.write(b"N 0 0\n")
-                    print(f"[Drive] Цель достигнута. Итоговое расстояние: {traveled:.4f}м")
-                    break
-
-                # PID-коррекция курса
-                error = target_yaw - self.current_yaw
-                if error > 180: error -= 360
-                if error < -180: error += 360
-                correction = error * kp
-
-                v_l = int(speed_cm_s - correction)
-                v_r = int(speed_cm_s + correction)
-                self.ser_arduino.write(f"N {v_l} {v_r}\n".encode())
-
-                time.sleep(0.1) # Интервал лога (10 Гц)
-        except KeyboardInterrupt:
-            self.ser_arduino.write(b"N 0 0\n")
-            print("\n[Drive] Остановлено пользователем")
     def calibrate(self):
         print("[System] Инициализация...")
         self.reset_encoders()
@@ -247,27 +214,50 @@ class SmartRobot:
 if __name__ == "__main__":
     robot = SmartRobot()
     robot.calibrate()
-    time.sleep(1)
 
-    robot.drive_straight(3.85, 30)
-
+    robot.drive_straight(3.60, 30)
     robot.brushes_on()
+    robot.drive_straight(0.15, 30)
+
     time.sleep(1.5)
-    robot.drive_straight(-0.2, 30)
+    robot.drive_straight(-0.1, 30)
+    time.sleep(0.2)
     robot.turn_relative(-85)
     time.sleep(1)
-    robot.drive_straight(0.55, 30)
-    robot.brushes_off()
+    robot.drive_straight(0.6, 30)
     time.sleep(0.2)
 
-    robot.turn_relative(85)
-    time.sleep(0.2)
-    robot.drive_straight(0.5, 30)
-    robot.brushes_on()
-    time.sleep(0.2)
     robot.turn_relative(90)
     time.sleep(0.2)
-    robot.drive_straight(0.45, 30)
+    robot.drive_straight(1.0, 30)
+    time.sleep(0.2)
+    robot.turn_relative(85)
+    time.sleep(0.2)
+    robot.drive_straight(0.6, 30)
     time.sleep(1)
+
+
+    robot.drive_straight(-1.0, 30)
+    # time.sleep(1)
     robot.brushes_off()
 
+    # robot.turn_relative(90)
+    # time.sleep(0.2)
+    # robot.drive_straight(1.0, 30)
+    # time.sleep(0.2)
+    #
+    # robot.drive_straight(0.6, 30)
+    # time.sleep(0.2)
+    # robot.turn_relative(90)
+    # time.sleep(0.2)
+    # robot.drive_straight(0.4, 30)
+    #
+    # # robot.drive_straight(-3.90, 30)
+    # # time.sleep(0.2)
+    # # robot.brushes_on()
+    # # robot.drive_straight(0.8, 30)
+    # # robot.brushes_off()
+
+    # robot.brushes_on()
+    # time.sleep(10)
+    # robot.brushes_off()
