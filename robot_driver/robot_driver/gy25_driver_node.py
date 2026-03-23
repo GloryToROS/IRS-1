@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
 import serial
-import struct
+import threading
 
 
 class GyroNode(Node):
@@ -14,42 +14,44 @@ class GyroNode(Node):
         self.baud = 115200
 
         try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=0.01)
+            # Ставим небольшой timeout, чтобы read() не зависал вечно при выходе
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
             self.get_logger().info(f"Connected to Gyro on {self.port}")
         except Exception as e:
             self.get_logger().error(f"Failed to connect to Gyro: {e}")
             return
 
         self.publisher_ = self.create_publisher(Float32, 'gyro/yaw', 10)
-
-        # Буфер для обработки пакета (8 байт как в вашем коде)
         self.gyro_window = [0] * 8
 
-        # Таймер опроса (100 Гц)
-        self.timer = self.create_timer(0.01, self.read_gyro)
+        # Запускаем бесконечный цикл чтения в отдельном потоке
+        self.thread = threading.Thread(target=self.read_loop, daemon=True)
+        self.thread.start()
 
-    def read_gyro(self):
-        if self.ser.in_waiting > 0:
-            chunk = self.ser.read(self.ser.in_waiting)
-            for byte in chunk:
-                self.gyro_window.pop(0)
-                self.gyro_window.append(byte)
+    def read_loop(self):
+        """Метод выполняется в отдельном потоке"""
+        while rclpy.ok():
+            try:
+                if self.ser.in_waiting > 0:
+                    byte = self.ser.read(1)
+                    if not byte:
+                        continue
 
-                # Проверка заголовка 0xAA и конца 0x55
-                if self.gyro_window[0] == 0xAA and self.gyro_window[7] == 0x55:
-                    # Сборка 16-битного значения (Big Endian)
-                    raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
+                    self.gyro_window.pop(0)
+                    self.gyro_window.append(ord(byte))
 
-                    # Обработка знака (int16)
-                    if raw > 32767:
-                        raw -= 65536
+                    # Проверка пакета: [0xAA, high, low, ..., 0x55]
+                    if self.gyro_window[0] == 0xAA and self.gyro_window[7] == 0x55:
+                        raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
+                        if raw > 32767: raw -= 65536
+                        yaw_deg = raw / 100.0
 
-                    yaw_deg = raw / 100.0
-
-                    # Публикация
-                    msg = Float32()
-                    msg.data = yaw_deg
-                    self.publisher_.publish(msg)
+                        msg = Float32()
+                        msg.data = yaw_deg
+                        self.publisher_.publish(msg)
+            except Exception as e:
+                self.get_logger().error(f"Error in read loop: {e}")
+                break
 
 
 def main(args=None):
