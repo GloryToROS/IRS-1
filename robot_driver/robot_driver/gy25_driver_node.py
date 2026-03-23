@@ -1,106 +1,64 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu
+from std_msgs.msg import Float32
 import serial
-import math
+import struct
 
 
-class GY25Driver(Node):
+class GyroNode(Node):
     def __init__(self):
-        super().__init__('gy25_driver')
+        super().__init__('gyro_node')
 
-        self.publisher_ = self.create_publisher(Imu, 'imu/data', 10)
+        # Параметры подключения
+        self.port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0'
+        self.baud = 115200
 
-        # --- НАСТРОЙКА ПОРТА ---
-        port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0'
-        self.ser = serial.Serial(port, 115200, timeout=1)
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.01)
+            self.get_logger().info(f"Connected to Gyro on {self.port}")
+        except Exception as e:
+            self.get_logger().error(f"Failed to connect to Gyro: {e}")
+            return
 
-        # Таймер опроса 100 Гц
-        self.timer = self.create_timer(0.01, self.read_and_publish)
+        self.publisher_ = self.create_publisher(Float32, 'gyro/yaw', 10)
 
-        self.get_logger().info('GY-25 ROS2 Node started!')
+        # Буфер для обработки пакета (8 байт как в вашем коде)
+        self.gyro_window = [0] * 8
 
-    # ------------------------------------------
-    # Декодирование углов GY-25
-    # ------------------------------------------
-    def decode_angle(self, high, low):
-        angle = (high << 8 | low) / 100.0
+        # Таймер опроса (100 Гц)
+        self.timer = self.create_timer(0.01, self.read_gyro)
 
-        if angle > 180:
-            angle -= 655.35
+    def read_gyro(self):
+        if self.ser.in_waiting > 0:
+            chunk = self.ser.read(self.ser.in_waiting)
+            for byte in chunk:
+                self.gyro_window.pop(0)
+                self.gyro_window.append(byte)
 
-        return math.radians(angle)
+                # Проверка заголовка 0xAA и конца 0x55
+                if self.gyro_window[0] == 0xAA and self.gyro_window[7] == 0x55:
+                    # Сборка 16-битного значения (Big Endian)
+                    raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
 
-    # ------------------------------------------
-    # Основной цикл чтения
-    # ------------------------------------------
-    def read_and_publish(self):
-        if self.ser.in_waiting >= 8:
-            raw = self.ser.read(self.ser.in_waiting)
+                    # Обработка знака (int16)
+                    if raw > 32767:
+                        raw -= 65536
 
-            for i in range(len(raw) - 8, -1, -1):
-                if raw[i] == 0xAA and raw[i + 1] == 0x02 and raw[i + 7] == 0x55:
+                    yaw_deg = raw / 100.0
 
-                    yaw = self.decode_angle(raw[i + 2], raw[i + 3])
-                    pitch = self.decode_angle(raw[i + 4], raw[i + 5])
-                    roll = self.decode_angle(raw[i + 6], raw[i + 7])
-
-                    # ------------------------------------------
-                    # Создание сообщения IMU
-                    # ------------------------------------------
-                    msg = Imu()
-                    msg.header.stamp = self.get_clock().now().to_msg()
-                    msg.header.frame_id = 'base_link'
-
-                    # ------------------------------------------
-                    # Перевод RPY -> Quaternion
-                    # ------------------------------------------
-                    cy = math.cos(yaw * 0.5)
-                    sy = math.sin(yaw * 0.5)
-                    cp = math.cos(pitch * 0.5)
-                    sp = math.sin(pitch * 0.5)
-                    cr = math.cos(roll * 0.5)
-                    sr = math.sin(roll * 0.5)
-
-                    msg.orientation.w = cy * cp * cr + sy * sp * sr
-                    msg.orientation.x = cy * cp * sr - sy * sp * cr
-                    msg.orientation.y = sy * cp * sr + cy * sp * cr
-                    msg.orientation.z = sy * cp * cr - cy * sp * sr
-
-                    # ------------------------------------------
-                    # 🔥 ВАЖНО: Covariance для robot_localization
-                    # ------------------------------------------
-
-                    # Доверяем ориентации
-                    msg.orientation_covariance = [
-                        0.01, 0.0, 0.0,
-                        0.0, 0.01, 0.0,
-                        0.0, 0.0, 0.02
-                    ]
-
-                    # Угловую скорость НЕ используем
-                    msg.angular_velocity_covariance[0] = -1.0
-
-                    # Ускорения НЕ используем
-                    msg.linear_acceleration_covariance[0] = -1.0
-
+                    # Публикация
+                    msg = Float32()
+                    msg.data = yaw_deg
                     self.publisher_.publish(msg)
-                    break
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = GY25Driver()
-
+    node = GyroNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.ser.close()
         node.destroy_node()
         rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
