@@ -71,6 +71,10 @@ class SmartRobot:
         self.ticks_per_rev = 1300.0
         self.r = 0.0325
 
+        self.kp = 0.8
+        self.kp_turn = 0.6  # Коэффициент замедления при приближении к углу
+        self.min_turn_speed = 8  # Минимальная скорость, чтобы моторы не встали из-за трения
+
     def reset_coordinates(self):
         if self.motors.reset_encoders():
             self.x, self.y = 0.0, 0.0
@@ -105,7 +109,6 @@ class SmartRobot:
         start_x, start_y = self.x, self.y
         start_time = time.time()
         target_yaw = self.gyro.current_yaw
-        kp = 0.8
 
         # Оперируем направлением
         direction = 1 if target_dist_m >= 0 else -1
@@ -133,7 +136,7 @@ class SmartRobot:
                 if error < -180: error += 360
 
                 # При движении назад ошибка инвертируется для правильного подруливания
-                correction = error * kp * direction
+                correction = error * self.kp * direction
 
                 # Базовая скорость теперь зависит от знака дистанции
                 base_speed = speed_cm_s * direction
@@ -181,9 +184,6 @@ class SmartRobot:
 
         print(f"[Turn] Текущий: {self.gyro.current_yaw:.1f}°, Цель: {target_yaw:.1f}°")
 
-        kp_turn = 0.6  # Коэффициент замедления при приближении к углу
-        min_speed = 8  # Минимальная скорость, чтобы моторы не встали из-за трения
-
         try:
             while True:
                 self.update_sensors()
@@ -200,11 +200,11 @@ class SmartRobot:
                     break
 
                 # Рассчитываем скорость вращения
-                v = error * kp_turn
+                v = error * self.kp_turn
 
                 # Ограничиваем скорость и не даем ей упасть ниже порога трогания
                 side = 1 if v > 0 else -1
-                v = side * max(min(abs(v), speed), min_speed)
+                v = side * max(min(abs(v), speed), self.min_turn_speed)
 
                 # Для разворота на месте: левое минус v, правое плюс v
                 v_l = int(-v)
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     robot.calibrate()
 
     robot.drive_straight(0.3, 30)
-    robot.brushes_on()
+    # robot.brushes_on()
     robot.drive_straight(0.15, 30)
 
     time.sleep(1.5)
@@ -247,7 +247,7 @@ if __name__ == "__main__":
 
     robot.drive_straight(-1.0, 30)
     # time.sleep(1)
-    robot.brushes_off()
+    # robot.brushes_off()
 
 
     # robot.drive_straight(2.0, 30)
