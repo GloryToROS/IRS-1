@@ -15,7 +15,7 @@ class Gyroscope:
         self.yaw_offset = 0.0
         self.current_yaw = 0.0
 
-    def get_data(self):
+    def update_data(self):
         if self.serial.in_waiting > 0:
             chunk = self.serial.read(self.serial.in_waiting)
             for byte in chunk:
@@ -74,7 +74,7 @@ class SmartRobot:
 
     def update_sensors(self):
         # Гироскоп
-        self.gyro.get_data()
+        self.gyro.update_data()
 
         # Ардуино
         if self.ser_arduino.in_waiting > 0:
