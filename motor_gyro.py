@@ -26,15 +26,47 @@ class Gyroscope:
                     if raw > 32767: raw -= 65536
                     self.current_yaw = (raw / 100.0) - self.yaw_offset
 
+class Motors:
+    def __init__(self):
+        self.serial = serial.Serial(PORT_ARDUINO, 9600, timeout=0.1)
+
+        self.left_encoder_offset = 0
+        self.right_encoder_offset = 0
+        self.left_encoder_last_value = 0
+        self.right_encoder_last_value = 0
+
+    def get_raw_encoder_data(self):
+        for _ in range(50):
+            line = self.serial.readline().decode(errors='ignore').strip()
+            if line.startswith("ENC:"):
+                try:
+                    parts = line.split()
+                    return int(parts[1]), int(parts[2])
+                except:
+                    pass
+            time.sleep(0.01)
+        return None
+
+    def reset_encoders(self):
+        self.serial.reset_input_buffer()
+        res = self.get_raw_encoder_data()
+        if res:
+            self.left_encoder_offset, self.right_encoder_offset = res
+            self.left_encoder_last_value, self.right_encoder_last_value = 0, 0
+            return True
+        else:
+            return False
+
+    def write(self, command):
+        self.serial.write(command)
+
 class SmartRobot:
     def __init__(self):
         self.gyro = Gyroscope()
-        self.ser_arduino = serial.Serial(PORT_ARDUINO, 9600, timeout=0.1)
+        self.motors = Motors()
 
-        self.x, self.y = 0.0, 0.0
-        self.enc_offset_l = 0
-        self.enc_offset_r = 0
-        self.last_enc_l, self.last_enc_r = None, None
+        self.x = 0.0
+        self.y = 0.0
 
         self.ticks_per_rev = 1300.0
         self.r = 0.0325
@@ -63,11 +95,7 @@ class SmartRobot:
             print("[Error] Данные ENC не получены!")
 
     def reset_coordinates(self):
-        """Полный сброс локальных координат и базовых тиков энкодеров"""
-        res = self.get_raw_enc()
-        if res:
-            self.enc_offset_l, self.enc_offset_r = res
-            self.last_enc_l, self.last_enc_r = 0, 0
+        if self.motors.reset_encoders():
             self.x, self.y = 0.0, 0.0
             return True
         return False
@@ -76,26 +104,23 @@ class SmartRobot:
         # Гироскоп
         self.gyro.update_data()
 
-        # Ардуино
-        if self.ser_arduino.in_waiting > 0:
-            line = self.ser_arduino.readline().decode(errors='ignore').strip()
-            if line.startswith("ENC:"):
-                try:
-                    parts = line.split()
-                    curr_l = int(parts[1]) - self.enc_offset_l
-                    curr_r = int(parts[2]) - self.enc_offset_r
+        # Энкодеры
+        parts = self.motors.get_raw_encoder_data()
+        if parts is None:
+            return
+        curr_l = parts[0] - self.motors.left_encoder_offset
+        curr_r = parts[1] - self.motors.right_encoder_offset
 
-                    if self.last_enc_l is not None:
-                        d_l = curr_l - self.last_enc_l
-                        d_r = curr_r - self.last_enc_r
-                        step_dist = ((d_l + d_r) / 2.0 / self.ticks_per_rev) * (2 * math.pi * self.r)
+        # Вычисления
+        d_l = curr_l - self.motors.left_encoder_last_value
+        d_r = curr_r - self.motors.right_encoder_last_value
+        step_dist = ((d_l + d_r) / 2.0 / self.ticks_per_rev) * (2 * math.pi * self.r)
 
-                        rad = math.radians(self.gyro.current_yaw)
-                        self.x += step_dist * math.cos(rad)
-                        self.y += step_dist * math.sin(rad)
+        rad = math.radians(self.gyro.current_yaw)
+        self.x += step_dist * math.cos(rad)
+        self.y += step_dist * math.sin(rad)
 
-                    self.last_enc_l, self.last_enc_r = curr_l, curr_r
-                except: pass
+        self.motors.left_encoder_last_value, self.motors.right_encoder_last_value = curr_l, curr_r
 
     def drive_straight(self, target_dist_m, speed_cm_s=15):
         self.reset_coordinates()
@@ -121,7 +146,7 @@ class SmartRobot:
 
                 # Сравниваем пройденное расстояние с модулем цели
                 if traveled >= abs(target_dist_m):
-                    self.ser_arduino.write(b"N 0 0\n")
+                    self.motors.write(b"N 0 0\n")
                     print(f"[Drive] Цель достигнута. Итоговое расстояние: {traveled:.4f}м")
                     break
 
@@ -139,16 +164,16 @@ class SmartRobot:
                 v_l = int(base_speed - correction)
                 v_r = int(base_speed + correction)
 
-                self.ser_arduino.write(f"N {v_l} {v_r}\n".encode())
+                self.motors.write(f"N {v_l} {v_r}\n".encode())
 
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            self.ser_arduino.write(b"N 0 0\n")
+            self.motors.write(b"N 0 0\n")
             print("\n[Drive] Остановлено пользователем")
 
     def calibrate(self):
         print("[System] Инициализация...")
-        self.reset_encoders()
+        self.motors.reset_encoders()
         print("[System] Калибровка гироскопа (2 сек)...")
         time.sleep(2)
         self.update_sensors()
@@ -157,13 +182,13 @@ class SmartRobot:
         self.gyro.yaw_offset = raw / 100.0
         print(f"[System] Готов.Yaw Offset: {self.gyro.yaw_offset:.2f}")
 
-    def brushes_on(self):
-        print("[Brushes] Включение щеток...")
-        self.ser_arduino.write(b"W\n")
-
-    def brushes_off(self):
-        print("[Brushes] Выключение щеток...")
-        self.ser_arduino.write(b"w\n")
+    # def brushes_on(self):
+    #     print("[Brushes] Включение щеток...")
+    #     self.motors.write(b"W\n")
+    #
+    # def brushes_off(self):
+    #     print("[Brushes] Выключение щеток...")
+    #     self.motors.write(b"w\n")
 
     def turn_relative(self, angle_deg, speed=15):
         """
@@ -193,7 +218,7 @@ class SmartRobot:
 
                 # Если подошли достаточно близко (порог 1.5 градуса)
                 if abs(error) < 1.5:
-                    self.ser_arduino.write(b"N 0 0\n")
+                    self.motors.write(b"N 0 0\n")
                     print(f"[Turn] Поворот завершен. Итоговый угол: {self.gyro.current_yaw:.1f}°")
                     break
 
@@ -208,14 +233,14 @@ class SmartRobot:
                 v_l = int(-v)
                 v_r = int(v)
 
-                self.ser_arduino.write(f"N {v_l} {v_r}\n".encode())
+                self.motors.write(f"N {v_l} {v_r}\n".encode())
 
                 sys.stdout.write(f"\rПоворот: Error {error:6.2f}° | Команда: N {v_l} {v_r}")
                 sys.stdout.flush()
 
                 time.sleep(0.05)
         except KeyboardInterrupt:
-            self.ser_arduino.write(b"N 0 0\n")
+            self.motors.write(b"N 0 0\n")
 
 if __name__ == "__main__":
     robot = SmartRobot()
