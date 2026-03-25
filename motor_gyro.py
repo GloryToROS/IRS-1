@@ -154,8 +154,8 @@ class SmartRobot:
         self.update_sensors()
         raw = (self.gyro.window[1] << 8) | self.gyro.window[2]
         if raw > 32767: raw -= 65536
-        self.yaw_offset = raw / 100.0
-        print(f"[System] Готов.Yaw Offset: {self.yaw_offset:.2f}")
+        self.gyro.yaw_offset = raw / 100.0
+        print(f"[System] Готов.Yaw Offset: {self.gyro.yaw_offset:.2f}")
 
     def brushes_on(self):
         print("[Brushes] Включение щеток...")
