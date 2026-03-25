@@ -60,7 +60,7 @@ class Motors:
     def write(self, command):
         self.serial.write(command)
 
-class SmartRobot:
+class Robot:
     def __init__(self):
         self.gyro = Gyroscope()
         self.motors = Motors()
@@ -103,7 +103,7 @@ class SmartRobot:
 
         self.motors.left_encoder_last_value, self.motors.right_encoder_last_value = curr_l, curr_r
 
-    def drive_straight(self, target_dist_m, speed_cm_s=15):
+    def drive_straight(self, target_dist_m, speed_cm_s=30):
         self.reset_coordinates()
         self.update_sensors()
         start_x, start_y = self.x, self.y
@@ -220,66 +220,14 @@ class SmartRobot:
             self.motors.write(b"N 0 0\n")
 
 if __name__ == "__main__":
-    robot = SmartRobot()
+    robot = Robot()
     robot.calibrate()
 
-    robot.drive_straight(0.3, 30)
-    # robot.brushes_on()
-    robot.drive_straight(0.15, 30)
-
-    time.sleep(1.5)
-    # robot.drive_straight(-0.07, 30)
-    time.sleep(0.2)
-    robot.turn_relative(-85)
-    time.sleep(1)
-    robot.drive_straight(0.5, 30)
-    time.sleep(0.2)
-
+    robot.drive_straight(0.5)
     robot.turn_relative(90)
-    time.sleep(0.2)
-    robot.drive_straight(1.0, 30)
-    time.sleep(0.2)
-    robot.turn_relative(85)
-    time.sleep(0.2)
-    robot.drive_straight(0.6, 30)
-    time.sleep(1)
-
-
-    robot.drive_straight(-1.0, 30)
-    # time.sleep(1)
-    # robot.brushes_off()
-
-
-    # robot.drive_straight(2.0, 30)
-    # robot.turn_relative(-85)
-    # robot.drive_straight(2.0, 30)
-    # robot.brushes_on()
-    # robot.drive_straight(1.3, 30)
-    # robot.turn_relative(85)
-    # robot.drive_straight(0.6, 30)
-    # robot.turn_relative(85)
-    # robot.drive_straight(0.6, 30)
-
-
-    # robot.turn_relative(90)
-    # time.sleep(0.2)
-    # robot.drive_straight(1.0, 30)
-    # time.sleep(0.2)
-    #
-    # robot.drive_straight(0.6, 30)
-    # time.sleep(0.2)
-    # robot.turn_relative(90)
-    # time.sleep(0.2)
-    # robot.drive_straight(0.4, 30)
-    #
-    # # robot.drive_straight(-3.90, 30)
-    # # time.sleep(0.2)
-    # # robot.brushes_on()
-    # # robot.drive_straight(0.8, 30)
-    # # robot.brushes_off()
-
-
-    # robot.brushes_on()
-    # time.sleep(10)
-    # robot.brushes_off()
-    
+    robot.drive_straight(0.5)
+    robot.turn_relative(90)
+    robot.drive_straight(0.5)
+    robot.turn_relative(90)
+    robot.drive_straight(0.5)
+    robot.turn_relative(90)
