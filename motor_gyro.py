@@ -223,16 +223,16 @@ if __name__ == "__main__":
     robot = SmartRobot()
     robot.calibrate()
 
-    robot.drive_straight(3.60, 30)
+    robot.drive_straight(0.3, 30)
     robot.brushes_on()
     robot.drive_straight(0.15, 30)
 
     time.sleep(1.5)
-    robot.drive_straight(-0.1, 30)
+    # robot.drive_straight(-0.07, 30)
     time.sleep(0.2)
     robot.turn_relative(-85)
     time.sleep(1)
-    robot.drive_straight(0.6, 30)
+    robot.drive_straight(0.5, 30)
     time.sleep(0.2)
 
     robot.turn_relative(90)
@@ -248,6 +248,18 @@ if __name__ == "__main__":
     robot.drive_straight(-1.0, 30)
     # time.sleep(1)
     robot.brushes_off()
+
+
+    # robot.drive_straight(2.0, 30)
+    # robot.turn_relative(-85)
+    # robot.drive_straight(2.0, 30)
+    # robot.brushes_on()
+    # robot.drive_straight(1.3, 30)
+    # robot.turn_relative(85)
+    # robot.drive_straight(0.6, 30)
+    # robot.turn_relative(85)
+    # robot.drive_straight(0.6, 30)
+
 
     # robot.turn_relative(90)
     # time.sleep(0.2)
@@ -266,6 +278,8 @@ if __name__ == "__main__":
     # # robot.drive_straight(0.8, 30)
     # # robot.brushes_off()
 
+
     # robot.brushes_on()
     # time.sleep(10)
     # robot.brushes_off()
+    
