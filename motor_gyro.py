@@ -31,10 +31,6 @@ class SmartRobot:
         self.gyro = Gyroscope()
         self.ser_arduino = serial.Serial(PORT_ARDUINO, 9600, timeout=0.1)
 
-        self.gyro_window = [0] * 8
-        self.yaw_offset = 0.0
-        self.current_yaw = 0.0
-
         self.x, self.y = 0.0, 0.0
         self.enc_offset_l = 0
         self.enc_offset_r = 0
@@ -94,7 +90,7 @@ class SmartRobot:
                         d_r = curr_r - self.last_enc_r
                         step_dist = ((d_l + d_r) / 2.0 / self.ticks_per_rev) * (2 * math.pi * self.r)
 
-                        rad = math.radians(self.current_yaw)
+                        rad = math.radians(self.gyro.current_yaw)
                         self.x += step_dist * math.cos(rad)
                         self.y += step_dist * math.sin(rad)
 
@@ -106,7 +102,7 @@ class SmartRobot:
         self.update_sensors()
         start_x, start_y = self.x, self.y
         start_time = time.time()
-        target_yaw = self.current_yaw
+        target_yaw = self.gyro.current_yaw
         kp = 0.8
 
         # Оперируем направлением
@@ -130,7 +126,7 @@ class SmartRobot:
                     break
 
                 # PID-коррекция курса
-                error = target_yaw - self.current_yaw
+                error = target_yaw - self.gyro.current_yaw
                 if error > 180: error -= 360
                 if error < -180: error += 360
 
@@ -156,7 +152,7 @@ class SmartRobot:
         print("[System] Калибровка гироскопа (2 сек)...")
         time.sleep(2)
         self.update_sensors()
-        raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
+        raw = (self.gyro.window[1] << 8) | self.gyro.window[2]
         if raw > 32767: raw -= 65536
         self.yaw_offset = raw / 100.0
         print(f"[System] Готов.Yaw Offset: {self.yaw_offset:.2f}")
@@ -175,13 +171,13 @@ class SmartRobot:
         angle_deg: положительный (налево/против часовой), отрицательный (направо/по часовой)
         """
         self.update_sensors()
-        target_yaw = self.current_yaw + angle_deg
+        target_yaw = self.gyro.current_yaw + angle_deg
 
         # Нормализуем цель, чтобы она оставалась в пределах [-180, 180]
         if target_yaw > 180: target_yaw -= 360
         if target_yaw < -180: target_yaw += 360
 
-        print(f"[Turn] Текущий: {self.current_yaw:.1f}°, Цель: {target_yaw:.1f}°")
+        print(f"[Turn] Текущий: {self.gyro.current_yaw:.1f}°, Цель: {target_yaw:.1f}°")
 
         kp_turn = 0.6  # Коэффициент замедления при приближении к углу
         min_speed = 8  # Минимальная скорость, чтобы моторы не встали из-за трения
@@ -191,14 +187,14 @@ class SmartRobot:
                 self.update_sensors()
 
                 # Считаем кратчайшую ошибку угла
-                error = target_yaw - self.current_yaw
+                error = target_yaw - self.gyro.current_yaw
                 if error > 180: error -= 360
                 if error < -180: error += 360
 
                 # Если подошли достаточно близко (порог 1.5 градуса)
                 if abs(error) < 1.5:
                     self.ser_arduino.write(b"N 0 0\n")
-                    print(f"[Turn] Поворот завершен. Итоговый угол: {self.current_yaw:.1f}°")
+                    print(f"[Turn] Поворот завершен. Итоговый угол: {self.gyro.current_yaw:.1f}°")
                     break
 
                 # Рассчитываем скорость вращения
