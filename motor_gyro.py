@@ -8,9 +8,27 @@ import sys
 PORT_GYRO = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0'
 PORT_ARDUINO = '/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0'
 
+class Gyroscope:
+    def __init__(self):
+        self.serial = serial.Serial(PORT_GYRO, 115200, timeout=0.01)
+        self.window = [0] * 8
+        self.yaw_offset = 0.0
+        self.current_yaw = 0.0
+
+    def get_data(self):
+        if self.serial.in_waiting > 0:
+            chunk = self.serial.read(self.serial.in_waiting)
+            for byte in chunk:
+                self.window.pop(0)
+                self.window.append(byte)
+                if self.window[0] == 0xAA and self.window[7] == 0x55:
+                    raw = (self.window[1] << 8) | self.window[2]
+                    if raw > 32767: raw -= 65536
+                    self.current_yaw = (raw / 100.0) - self.yaw_offset
+
 class SmartRobot:
     def __init__(self):
-        self.ser_gyro = serial.Serial(PORT_GYRO, 115200, timeout=0.01)
+        self.gyro = Gyroscope()
         self.ser_arduino = serial.Serial(PORT_ARDUINO, 9600, timeout=0.1)
 
         self.gyro_window = [0] * 8
@@ -60,15 +78,7 @@ class SmartRobot:
 
     def update_sensors(self):
         # Гироскоп
-        if self.ser_gyro.in_waiting > 0:
-            chunk = self.ser_gyro.read(self.ser_gyro.in_waiting)
-            for byte in chunk:
-                self.gyro_window.pop(0)
-                self.gyro_window.append(byte)
-                if self.gyro_window[0] == 0xAA and self.gyro_window[7] == 0x55:
-                    raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
-                    if raw > 32767: raw -= 65536
-                    self.current_yaw = (raw / 100.0) - self.yaw_offset
+        self.gyro.get_data()
 
         # Ардуино
         if self.ser_arduino.in_waiting > 0:
