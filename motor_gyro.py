@@ -71,29 +71,6 @@ class SmartRobot:
         self.ticks_per_rev = 1300.0
         self.r = 0.0325
 
-    def get_raw_enc(self):
-        self.ser_arduino.reset_input_buffer()
-        for _ in range(50):
-            line = self.ser_arduino.readline().decode(errors='ignore').strip()
-            if line.startswith("ENC:"):
-                try:
-                    parts = line.split()
-                    return int(parts[1]), int(parts[2])
-                except: continue
-            time.sleep(0.01)
-        return None
-
-    def reset_encoders(self):
-        print("[System] Обнуление энкодеров...")
-        res = self.get_raw_enc()
-        if res:
-            self.enc_offset_l, self.enc_offset_r = res
-            self.last_enc_l, self.last_enc_r = 0, 0
-            self.x, self.y = 0.0, 0.0
-            print(f"[System] База энкодеров установлена: L:{self.enc_offset_l} R:{self.enc_offset_r}")
-        else:
-            print("[Error] Данные ENC не получены!")
-
     def reset_coordinates(self):
         if self.motors.reset_encoders():
             self.x, self.y = 0.0, 0.0
