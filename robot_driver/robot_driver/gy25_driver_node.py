@@ -1,11 +1,11 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
-from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import TransformStamped
 import serial
-import threading
 import math
 import time
+import tf2_ros
 
 
 class GyroNode(Node):
@@ -14,92 +14,192 @@ class GyroNode(Node):
 
         self.port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0'
         self.baud = 115200
-        # Frame ID важен для TF (трансформаций) в SLAM/Nav2
         self.frame_id = 'imu_link'
 
         try:
             self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
-            self.get_logger().info(f"Connected to Gyro on {self.port}")
+            self.get_logger().info(f"CONNECTED to gyro")
         except Exception as e:
-            self.get_logger().error(f"Failed to connect: {e}")
+            self.get_logger().error(f"SERIAL ERROR: {e}")
             return
 
-        # Стандартный топик для IMU
-        self.publisher_ = self.create_publisher(Imu, 'imu/data', 10)
-        self.gyro_window = [0] * 8
+        # ROS
+        self.pub = self.create_publisher(Imu, '/imu/data', 10)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.thread = threading.Thread(target=self.read_loop, daemon=True)
-        self.thread.start()
+        # Буфер
+        self.window = [0] * 8
 
-    def euler_to_quaternion(self, yaw):
-        """Перевод угла Yaw (в радианах) в кватернион ROS"""
-        # Формула для вращения только вокруг оси Z
-        q = Quaternion()
-        q.x = 0.0
-        q.y = 0.0
-        q.z = math.sin(yaw / 2.0)
-        q.w = math.cos(yaw / 2.0)
-        return q
+        # Калибровка
+        self.yaw_offset = 0.0
+        self.calibrated = False
+
+        # Таймер вместо потока
+        self.create_timer(0.001, self.read_loop)
+        self.create_timer(0.05, self.publish_tf)
+
+        # Отдельный флаг, чтобы не спамить
+        self.last_log_time = time.time()
+
+    # --- ВСПОМОГАТЕЛЬНОЕ ---
+
+    def normalize_angle(self, angle):
+        while angle > math.pi:
+            angle -= 2 * math.pi
+        while angle < -math.pi:
+            angle += 2 * math.pi
+        return angle
+
+    def yaw_to_quaternion(self, yaw):
+        return [
+            0.0,
+            0.0,
+            math.sin(yaw / 2.0),
+            math.cos(yaw / 2.0)
+        ]
+
+    def calibrate(self):
+        self.get_logger().info("CALIBRATING (2 sec)...")
+        samples = []
+
+        start = time.time()
+        while time.time() - start < 2.0:
+            if self.ser.in_waiting > 0:
+                byte = self.ser.read(1)
+                if len(byte) == 0:
+                    continue
+
+                self.window.pop(0)
+                self.window.append(ord(byte))
+
+                if self.window[0] == 0xAA and self.window[7] == 0x55:
+                    raw = (self.window[1] << 8) | self.window[2]
+                    if raw > 32767:
+                        raw -= 65536
+                    samples.append(raw / 100.0)
+
+        if samples:
+            self.yaw_offset = sum(samples) / len(samples)
+            self.get_logger().info(f"OFFSET: {self.yaw_offset:.2f}")
+        else:
+            self.yaw_offset = 0.0
+            self.get_logger().warn("Calibration skipped!")
+
+        self.calibrated = True
+
+    # --- ОСНОВНОЙ ЦИКЛ ---
 
     def read_loop(self):
+        self.calibrate()
+
+        last_yaw = None
+        last_time = time.time()
+
         while rclpy.ok():
             try:
-                if self.ser.in_waiting > 0:
-                    byte = self.ser.read(1)
-                    if not byte: continue
+                byte = self.ser.read(1)
+                if not byte:
+                    continue
 
-                    self.gyro_window.pop(0)
-                    self.gyro_window.append(ord(byte))
+                # Ждём начало пакета
+                if byte[0] != 0xAA:
+                    continue
 
-                    if self.gyro_window[0] == 0xAA and self.gyro_window[7] == 0x55:
-                        raw = (self.gyro_window[1] << 8) | self.gyro_window[2]
-                        if raw > 32767: raw -= 65536
+                # Читаем остальные 7 байт
+                data = self.ser.read(7)
+                if len(data) != 7:
+                    continue
 
-                        # Переводим в радианы (стандарт ROS)
-                        yaw_rad = math.radians(raw / 100.0)
+                packet = [0xAA] + list(data)
 
-                        msg = Imu()
-                        msg.header.stamp = self.get_clock().now().to_msg()
-                        msg.header.frame_id = self.frame_id
+                # Проверка конца пакета
+                if packet[7] != 0x55:
+                    self.get_logger().warn(f"BAD PACKET: {packet}")
+                    continue
 
-                        # Заполняем ориентацию
-                        msg.orientation = self.euler_to_quaternion(yaw_rad)
+                # --- ПАРСИНГ ---
+                raw = (packet[1] << 8) | packet[2]
+                if raw > 32767:
+                    raw -= 65536
 
-                        # Ковариация (важно для EKF!).
-                        # Если гироскоп точный, ставим маленькое число по диагонали (Z-ось).
-                        # Остальные оси (X, Y) блокируем огромным числом, так как данных нет.
-                        msg.orientation_covariance = [
-                            1e-9, 0.0, 0.0,
-                            0.0, 1e-9, 0.0,
-                            0.0, 0.0, 0.01  # Погрешность по Yaw
-                        ]
+                yaw_deg = raw / 100.0 - self.yaw_offset
+                yaw_rad = math.radians(yaw_deg)
+                yaw_rad = self.normalize_angle(yaw_rad)
 
-                        # Остальные поля (ускорение, угл. скорость) оставляем 0,
-                        # если датчик их не шлет. EKF умеет работать с частичными данными.
-                        self.publisher_.publish(msg)
+                now = time.time()
+
+                # --- УГЛОВАЯ СКОРОСТЬ ---
+                if last_yaw is not None:
+                    dt = now - last_time
+                    if dt > 0:
+                        dyaw = yaw_rad - last_yaw
+
+                        # !!! защита от скачков !!!
+                        if abs(dyaw) > math.pi:
+                            dyaw = 0.0
+
+                        yaw_rate = dyaw / dt
+                    else:
+                        yaw_rate = 0.0
                 else:
-                    time.sleep(0.005)  # Спим 5мс, чтобы не "съесть" CPU
+                    yaw_rate = 0.0
+
+                last_yaw = yaw_rad
+                last_time = now
+
+                # --- ROS ---
+                msg = Imu()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = self.frame_id
+
+                q = self.yaw_to_quaternion(yaw_rad)
+                msg.orientation.x = q[0]
+                msg.orientation.y = q[1]
+                msg.orientation.z = q[2]
+                msg.orientation.w = q[3]
+
+                msg.orientation_covariance = [
+                    1e6, 0.0, 0.0,
+                    0.0, 1e6, 0.0,
+                    0.0, 0.0, 0.05
+                ]
+
+                msg.angular_velocity.z = yaw_rate
+                msg.angular_velocity_covariance = [
+                    1e6, 0.0, 0.0,
+                    0.0, 1e6, 0.0,
+                    0.0, 0.0, 0.05
+                ]
+
+                self.pub.publish(msg)
+
             except Exception as e:
                 self.get_logger().error(f"Error: {e}")
                 break
 
+    # --- TF ---
 
-def main(args=None):
-    # Initialize the ROS 2 Python client library
-    rclpy.init(args=args)
+    def publish_tf(self):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'base_link'
+        t.child_frame_id = 'imu_link'
 
-    # Create an instance of your node
+        t.transform.translation.x = 0.0
+        t.transform.translation.y = 0.0
+        t.transform.translation.z = 0.05
+
+        t.transform.rotation.w = 1.0
+
+        self.tf_broadcaster.sendTransform(t)
+
+
+def main():
+    rclpy.init()
     node = GyroNode()
-
-    try:
-        # Keep the node alive and processing callbacks
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        # Clean up
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == '__main__':

@@ -1,0 +1,27 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    min_particles: 500
+    max_particles: 2000
+    kld_err: 0.05
+    kld_z: 0.99
+
+    alpha1: 0.0          # игнорируем энкодеры
+    alpha2: 0.0
+    alpha3: 0.0
+    alpha4: 0.0
+    alpha5: 0.0
+
+    laser_min_range: 0.05
+    laser_max_range: 6.0
+    update_min_d: 0.01   # минимальное перемещение для обновления
+    update_min_a: 0.01   # минимальный поворот для обновления
+    resample_interval: 1
+    do_beamskip: false    # для маленького полигона точность важнее
+    transform_tolerance: 0.1
+
+    odom_frame_id: "odom"       # одометрия есть, но AMCL её игнорирует
+    base_frame_id: "base_link"
+    global_frame_id: "map"
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0

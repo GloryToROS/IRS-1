@@ -1,0 +1,21 @@
+slam_toolbox:
+  ros__parameters:
+    odom_frame: "odom"          # фиксируем, но будем игнорировать
+    map_frame: "map"
+    base_frame: "base_link"
+    scan_topic: "/scan"
+    use_sim_time: false
+    mode: "online_sync"         # строим карту в реальном времени
+    resolution: 0.01            # 1 см на пиксель
+    max_laser_range: 6.0
+    map_update_interval: 0.5
+    transform_publish_period: 0.05
+    map_publish_period: 0.5
+    scan_filter_x_min: -10.0
+    scan_filter_x_max: 10.0
+    scan_filter_y_min: -10.0
+    scan_filter_y_max: 10.0
+    use_odom_msg: false         # игнорируем одометрию полностью
+    smooth_sigma: 0.0
+    occupancy_min_z: -1.0
+    occupancy_max_z: 1.0
